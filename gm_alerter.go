@@ -262,7 +262,7 @@ func mailAlert(emails []string, a map[string]string) {
         var err error
         for {
           file_name := file_name_prefix+strconv.FormatInt(suffix_i, 10)
-          fd, err = os.OpenFile(file_name, os.O_CREATE|os.O_EXCL, 0600)
+          fd, err = os.OpenFile(file_name, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
           if err != nil && os.IsExist(err) {
             suffix_i++
           } else {
@@ -335,7 +335,7 @@ func smsAlert(phones []string, a map[string]string) {
           var err error
           for {
             file_name := file_name_prefix+strconv.FormatInt(suffix_i, 10)
-            fd, err = os.OpenFile(file_name, os.O_CREATE|os.O_EXCL, 0600)
+            fd, err = os.OpenFile(file_name, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
             if err != nil && os.IsExist(err) {
               suffix_i++
             } else {
