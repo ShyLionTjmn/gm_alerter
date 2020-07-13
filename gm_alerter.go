@@ -29,6 +29,7 @@ const CONFIG_CHECK_INTERVAL=60
 
 const SMS_QUEUE="/var/smsqueue"
 const MAIL_QUEUE="/var/mymapper/mail_queue"
+const TELEGRAM_QUEUE="/var/mymapper/telegram_queue"
 
 const ERROR_SLEEP= 10
 const NORMAL_SLEEP= 1
@@ -44,6 +45,7 @@ var data = make(M)
 var opt_v int
 var opt_1 bool
 var opt_m bool
+var opt_t bool
 var opt_s bool
 var opt_q bool
 var opt_i int
@@ -64,6 +66,7 @@ func init() {
   flag.IntVar(&opt_v, "v", 0, "set verbosity level")
   flag.BoolVar(&opt_1, "1", false, "run once, for debugging or running from cron, default if -q not set")
   flag.BoolVar(&opt_m, "m", false, "send mail, use in production")
+  flag.BoolVar(&opt_t, "t", false, "send telegram, use in production")
   flag.BoolVar(&opt_s, "s", false, "send SMS, use in production")
   flag.BoolVar(&opt_q, "q", false, "consume alert queue, use in production")
   flag.IntVar(&opt_i, "i", NO_i_opt, "process alert with redis index (0 = oldest, 1 = second oldest, -1 = most recent, -2 = second recent, etc) , implies -1, can combine with -q")
@@ -127,9 +130,10 @@ func parseConfig(redmap map[string]string) (ret M, ret_err error) {
               l2_map := l2_i.(map[string]interface{})
               if v, ok := l2_map["email"]; ok { ret.MkM("user_groups", l0_key, l1_key /*persons*/, l2_key /*userid*/)["email"] = v.(string) }
               if v, ok := l2_map["phone"]; ok { ret.MkM("user_groups", l0_key, l1_key /*persons*/, l2_key /*userid*/)["phone"] = v.(string) }
+              if v, ok := l2_map["telegram"]; ok { ret.MkM("user_groups", l0_key, l1_key /*persons*/, l2_key /*userid*/)["telegram"] = v.(string) }
               if v, ok := l2_map["name"]; ok { ret.MkM("user_groups", l0_key, l1_key /*persons*/, l2_key /*userid*/)["name"] = v.(string) }
             }
-          } else if l1_key == "sms_alerts" || l1_key == "mail_alerts" {
+          } else if l1_key == "sms_alerts" || l1_key == "mail_alerts" || l1_key == "telegram_alerts" {
             l1_slice := l1_i.([]interface{})
             ret.MkM("user_groups", l0_key)[l1_key] = make([]M, 0)
             for _, l2_i := range l1_slice {
@@ -173,6 +177,17 @@ func parseConfig(redmap map[string]string) (ret M, ret_err error) {
       }
     }
     if ag_i, ok := ug_h.VAe("mail_alerts"); ok {
+      ag_s := ag_i.([]M)
+      for _, ag_h := range ag_s {
+        if ag_h.Vs("group") != "*" && !ret.Evs("group_rules", ag_h.Vs("group")) {
+          return nil, errors.New("Reference to unknown group rule "+ag_h.Vs("group"))
+        }
+        if !ret.Evs("rules", ag_h.Vs("rule")) {
+          return nil, errors.New("Reference to unknown rule "+ag_h.Vs("rule"))
+        }
+      }
+    }
+    if ag_i, ok := ug_h.VAe("telegram_alerts"); ok {
       ag_s := ag_i.([]M)
       for _, ag_h := range ag_s {
         if ag_h.Vs("group") != "*" && !ret.Evs("group_rules", ag_h.Vs("group")) {
@@ -277,6 +292,86 @@ func mailAlert(emails []string, a map[string]string) {
         }
         fmt.Fprintln(fd, email)
         fmt.Fprintln(fd, subj)
+        fmt.Fprintln(fd, body)
+        fd.Close()
+      }
+    }
+  }
+}
+
+func telegramAlert(userids []string, a map[string]string) {
+  defer func() {
+    recover() //just ignore type assertions
+  } ()
+
+  var body string
+
+  if a["alert_type"] == "dev" {
+    if a["alert_key"] == "overall_status" {
+      body = "Status "+strings.ToUpper(a["overall_status"])
+    } else if a["alert_key"] == "powerState" {
+      if a["new"] != "1" {
+        body = "Power FAILED"
+      } else {
+        body = "Power restored"
+      }
+    } else {
+      body = a["alert_key"]+": "+a["new"]+"\nPrev: "+a["old"]
+    }
+  } else if a["alert_type"] == "int" {
+    if a["alert_key"] == "ifOperStatus" {
+      if a["new"] == "1" {
+        body = "UP"
+      } else if a["new"] == "2" {
+        body = "DOWN"
+      }
+    } else {
+      body = a["alert_key"]+": "+a["new"]+"\nPrev: "+a["old"]
+    }
+    body += "\nInterface: "+a["ifName"]
+    if a["ifAlias"] != "" {
+      body += " ("+a["ifAlias"]+")"
+    }
+  }
+  body += "\nDevice: "+a["short_name"]+" ("+a["sysLocation"]+")"
+  body += "\nDevID: "+a["id"]+" ("+a["data_ip"]+")"
+  i, err := strconv.ParseInt(a["last_seen"], 10, 64)
+  if err == nil {
+    body += "\nLastSeen: "+time.Unix(i, 0).Format("Mon, 2006 Jan 2 15:04:05 ")
+  }
+  i, err = strconv.ParseInt(a["time"], 10, 64)
+  if err == nil {
+    body += "\nTimestamp: "+time.Unix(i, 0).Format("Mon, 2006 Jan 2 15:04:05 ")
+  }
+
+  if opt_v > 1 {
+    fmt.Println()
+    fmt.Println(userids)
+    fmt.Println("Telegram:")
+    fmt.Println(body)
+  }
+  if opt_t {
+    if _, e := os.Stat(TELEGRAM_QUEUE+"/pause"); e != nil && os.IsNotExist(e) {
+      for _, userid := range userids {
+        file_name_prefix := TELEGRAM_QUEUE+"/"+userid+"."
+        suffix_i := time.Now().UnixNano()
+        var fd *os.File
+        var err error
+        for {
+          file_name := file_name_prefix+strconv.FormatInt(suffix_i, 10)
+          fd, err = os.OpenFile(file_name, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
+          if err != nil && os.IsExist(err) {
+            suffix_i++
+          } else {
+            break
+          }
+        }
+        if err != nil {
+          if opt_v > 0 {
+            fmt.Println(err.Error())
+          }
+          return
+        }
         fmt.Fprintln(fd, body)
         fd.Close()
       }
@@ -397,6 +492,7 @@ func processAlert(alert_json string) error {
   host_groups := make([]string, 0)
   alert_emails := make([]string, 0)
   alert_phones := make([]string, 0)
+  alert_userids := make([]string, 0)
 
   if group_rules, ok := data.VMe("config", "group_rules"); ok {
     for group, rule_i := range group_rules {
@@ -414,6 +510,7 @@ func processAlert(alert_json string) error {
       if persons_h, ok := ug_h.VMe("persons"); ok {
         emails := make([]string, 0)
         phones := make([]string, 0)
+        userids := make([]string, 0)
 
         for _, p_m := range persons_h {
           if email, ok := p_m.(M).Vse("email"); ok && IndexOf(emails, email) < 0 {
@@ -421,6 +518,9 @@ func processAlert(alert_json string) error {
           }
           if phone, ok := p_m.(M).Vse("phone"); ok && IndexOf(phones, phone) < 0 {
             phones = append(phones, phone)
+          }
+          if userid, ok := p_m.(M).Vse("telegram"); ok && IndexOf(alert_userids, userid) < 0 {
+            userids = append(userids, userid)
           }
         }
 
@@ -435,6 +535,26 @@ func processAlert(alert_json string) error {
                   }
                   for _, email := range emails {
                     alert_emails = StrAppendOnce(alert_emails, email)
+                  }
+                }
+                if ag_h.Vs("action") == "stop" {
+                  break
+                }
+              }
+            }
+          }
+        }
+        if ags_i, ok := data.VAe("config", "user_groups", ug_id, "telegram_alerts"); ok && len(emails) > 0 {
+          for _, ag_h := range ags_i.([]M) {
+            if ag_h.Vs("action") != "ignore" {
+              if rule, ok := data.Vse("config", "rules", ag_h.Vs("rule")); ok && (ag_h.Vs("group") == "*" || IndexOf(host_groups, ag_h.Vs("group")) >= 0) {
+                match, err := MatchAlertRule(rule, a)
+                if match && err == nil {
+                  if opt_v > 2 {
+                    fmt.Println("Matched:", ug_id, "telegram_alerts", ag_h.Vs("group"), ag_h.Vs("rule"))
+                  }
+                  for _, userid := range userids {
+                    alert_userids = StrAppendOnce(alert_userids, userid)
                   }
                 }
                 if ag_h.Vs("action") == "stop" {
@@ -470,8 +590,9 @@ func processAlert(alert_json string) error {
 
   if len(alert_phones) > 0 { smsAlert(alert_phones, a) }
   if len(alert_emails) > 0 { mailAlert(alert_emails, a) }
+  if len(alert_userids) > 0 { telegramAlert(alert_userids, a) }
 
-  if len(alert_phones) == 0 && len(alert_emails) == 0 {
+  if len(alert_phones) == 0 && len(alert_emails) == 0 && len(alert_userids) == 0 {
     if opt_v > 1 {
       fmt.Println()
       fmt.Println("Ignore: "+a["alert_type"]+" "+a["ifName"]+" @ "+a["short_name"]+" "+a["alert_key"]+" "+a["old"]+" -> "+a["new"]+" time: "+a["time"])
