@@ -53,10 +53,12 @@ var opt_i int
 const NO_i_opt = int(1000000000)
 
 var phone_regex *regexp.Regexp
+var power_regex *regexp.Regexp
 
 func init() {
 
   phone_regex = regexp.MustCompile(`^9\d{9}$`)
+  power_regex = regexp.MustCompile(`(?i)power.*sensor`)
 
   w.WhereAmI()
   errors.New("")
@@ -232,12 +234,23 @@ func mailAlert(emails []string, a map[string]string) {
     }
   } else if a["alert_type"] == "int" {
     if a["alert_key"] == "ifOperStatus" {
-      if a["new"] == "1" {
-        subj = "OK: ifUp"
-        body = "UP"
-      } else if a["new"] == "2" {
-        subj = "CRIT: ifDown"
-        body = "DOWN"
+
+      if power_regex.MatchString(a["ifAlias"]) {
+        if a["new"] == "1" {
+          subj = "OK: power sensor"
+          body = "Power sensor Ok"
+        } else if a["new"] == "2" {
+          subj = "FAIL: power sensor"
+          body = "Power sensor FAIL"
+        }
+      } else {
+        if a["new"] == "1" {
+          subj = "OK: ifUp"
+          body = "Interface UP"
+        } else if a["new"] == "2" {
+          subj = "CRIT: ifDown"
+          body = "Interface DOWN"
+        }
       }
     } else {
       subj = a["alert_key"]+": "+a["new"]
@@ -320,10 +333,18 @@ func telegramAlert(userids []string, a map[string]string) {
     }
   } else if a["alert_type"] == "int" {
     if a["alert_key"] == "ifOperStatus" {
-      if a["new"] == "1" {
-        body = "UP"
-      } else if a["new"] == "2" {
-        body = "DOWN"
+      if power_regex.MatchString(a["ifAlias"]) {
+        if a["new"] == "1" {
+          body = "Power sensor Ok"
+        } else if a["new"] == "2" {
+          body = "Power sensor FAIL"
+        }
+      } else {
+        if a["new"] == "1" {
+          body = "Interface UP"
+        } else if a["new"] == "2" {
+          body = "Interface DOWN"
+        }
       }
     } else {
       body = a["alert_key"]+": "+a["new"]+"\nPrev: "+a["old"]
@@ -400,10 +421,18 @@ func smsAlert(phones []string, a map[string]string) {
     }
   } else if a["alert_type"] == "int" {
     if a["alert_key"] == "ifOperStatus" {
-      if a["new"] == "1" {
-        text = "OK: ifUp"
-      } else if a["new"] == "2" {
-        text = "CRIT: ifDown"
+      if power_regex.MatchString(a["ifAlias"]) {
+        if a["new"] == "1" {
+          text = "OK: power sensor"
+        } else if a["new"] == "2" {
+          text = "FAIL: power sensor"
+        }
+      } else {
+        if a["new"] == "1" {
+          text = "OK: ifUp"
+        } else if a["new"] == "2" {
+          text = "CRIT: ifDown"
+        }
       }
     } else {
       text = a["alert_key"]+": "+a["new"]
