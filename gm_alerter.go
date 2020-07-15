@@ -207,73 +207,108 @@ func parseConfig(redmap map[string]string) (ret M, ret_err error) {
   return ret, nil
 }
 
-func mailAlert(emails []string, a map[string]string) {
+func getMessageText(a map[string]string) (mailSubj string, longMessage string, smsMessage string) {
   defer func() {
     recover() //just ignore type assertions
   } ()
 
-  var subj string
-
-  var body string
-
   if a["alert_type"] == "dev" {
     if a["alert_key"] == "overall_status" {
-      subj = strings.ToUpper(a["overall_status"])+": status "+a["short_name"]+" ("+a["sysLocation"]+")"
-      body = "Status "+strings.ToUpper(a["overall_status"])
+      switch a["overall_status"] {
+      case "ok":
+        mailSubj = "Устройство на связи"
+        longMessage = "Устройство на связи:"
+        smsMessage = "Устройство на связи"
+      case "warn":
+        mailSubj = "Устройство НЕ на связи более 5 минут"
+        longMessage = "Устройство НЕ на связи более 5 минут:"
+        smsMessage = "Устройство на связи более 5 минут"
+      case "error":
+        mailSubj = "Устройство НЕ на связи более 10 минут"
+        longMessage = "Устройство НЕ на связи более 10 минут:"
+        smsMessage = "Устройство на связи более 10 минут"
+      default:
+        mailSubj = "Устройство НЕ на связи, статус "+strings.ToUpper(a["overall_status"])
+        longMessage = "Устройство НЕ на связи, статус "+strings.ToUpper(a["overall_status"])+":"
+        smsMessage = "Устройство НЕ на связи, статус "+strings.ToUpper(a["overall_status"])
+      }
+
     } else if a["alert_key"] == "powerState" {
       if a["new"] != "1" {
-        subj = "CRIT: power"
-        body = "Power FAILED"
+        mailSubj = "АВАРИЯ ПИТАНИЯ"
+        longMessage = "АВАРИЯ ПИТАНИЯ:"
+        smsMessage = "АВАРИЯ ПИТАНИЯ"
       } else {
-        subj = "OK: power"
-        body = "Power restored"
+        mailSubj = "Восстановление питания"
+        longMessage = "Восстановление питания:"
+        smsMessage = "Восстановление питания"
       }
     } else {
-      subj = a["alert_key"]+": "+a["new"]
-      body = a["alert_key"]+": "+a["new"]+"\nPrev: "+a["old"]
+      mailSubj = a["alert_key"]+": "+a["new"]
+      longMessage = a["alert_key"]+": "+a["new"]+"\nPrev: "+a["old"]
+      smsMessage = a["alert_key"]+": "+a["new"]
     }
   } else if a["alert_type"] == "int" {
     if a["alert_key"] == "ifOperStatus" {
 
       if power_regex.MatchString(a["ifAlias"]) {
         if a["new"] == "1" {
-          subj = "OK: power sensor"
-          body = "Power sensor Ok"
+          mailSubj = "Восстановление питания (сенсор)"
+          longMessage = "Восстановление питания (сенсор):"
+          smsMessage = "Восстановление питания (сенсор)"
         } else if a["new"] == "2" {
-          subj = "FAIL: power sensor"
-          body = "Power sensor FAIL"
+          mailSubj = "АВАРИЯ ПИТАНИЯ (сенсор)"
+          longMessage = "АВАРИЯ ПИТАНИЯ (сенсор):"
+          smsMessage = "АВАРИЯ ПИТАНИЯ (сенсор)"
         }
       } else {
         if a["new"] == "1" {
-          subj = "OK: ifUp"
-          body = "Interface UP"
+          mailSubj = "Интерфейс включился"
+          longMessage = "Интерфейс включился:"
+          smsMessage = "Интерфейс включился"
         } else if a["new"] == "2" {
-          subj = "CRIT: ifDown"
-          body = "Interface DOWN"
+          mailSubj = "Интерфейс ОТКЛЮЧИЛСЯ"
+          longMessage = "Интерфейс ОТКЛЮЧИЛСЯ:"
+          smsMessage = "Интерфейс ОТКЛЮЧИЛСЯ"
         }
       }
     } else {
-      subj = a["alert_key"]+": "+a["new"]
-      body = a["alert_key"]+": "+a["new"]+"\nPrev: "+a["old"]
+      mailSubj = a["alert_key"]+": "+a["new"]
+      longMessage = a["alert_key"]+": "+a["new"]+"\nPrev: "+a["old"]
+      smsMessage = a["alert_key"]+": "+a["new"]
     }
-    subj += " "+a["ifName"]
-    body += "\nInterface: "+a["ifName"]
+    mailSubj += " "+a["ifName"]
+    longMessage += "\nИнтерфейс: "+a["ifName"]
+    smsMessage += " "+a["ifName"]
+
     if a["ifAlias"] != "" {
-      subj += " ("+a["ifAlias"]+")"
-      body += " ("+a["ifAlias"]+")"
+      mailSubj += " ("+a["ifAlias"]+")"
+      longMessage += " ("+a["ifAlias"]+")"
+      smsMessage += " ("+a["ifAlias"]+")"
     }
   }
-  subj += " @ "+a["short_name"]+" ("+a["sysLocation"]+")"
-  body += "\nDevice: "+a["short_name"]+" ("+a["sysLocation"]+")"
-  body += "\nDevID: "+a["id"]+" ("+a["data_ip"]+")"
+  mailSubj += " @ "+a["short_name"]+" ("+a["sysLocation"]+")"
+  longMessage += "\nУстройство: "+a["short_name"]+" ("+a["sysLocation"]+")"
+  longMessage += "\nDevID: "+a["id"]+" ("+a["data_ip"]+")"
   i, err := strconv.ParseInt(a["last_seen"], 10, 64)
   if err == nil {
-    body += "\nLastSeen: "+time.Unix(i, 0).Format("Mon, 2006 Jan 2 15:04:05 ")
+    longMessage += "\nБыл доступен: "+time.Unix(i, 0).Format("Mon, 2006 Jan 2 15:04:05 ")
   }
   i, err = strconv.ParseInt(a["time"], 10, 64)
   if err == nil {
-    body += "\nTimestamp: "+time.Unix(i, 0).Format("Mon, 2006 Jan 2 15:04:05 ")
+    longMessage += "\nTimestamp: "+time.Unix(i, 0).Format("Mon, 2006 Jan 2 15:04:05 ")
   }
+  smsMessage += " @ "+a["short_name"]+" ("+a["sysLocation"]+")"
+
+  return
+}
+
+func mailAlert(emails []string, a map[string]string) {
+  defer func() {
+    recover() //just ignore type assertions
+  } ()
+
+  subj, body, _ := getMessageText(a)
 
   if opt_v > 1 {
     fmt.Println()
@@ -317,53 +352,7 @@ func telegramAlert(userids []string, a map[string]string) {
     recover() //just ignore type assertions
   } ()
 
-  var body string
-
-  if a["alert_type"] == "dev" {
-    if a["alert_key"] == "overall_status" {
-      body = "Status "+strings.ToUpper(a["overall_status"])
-    } else if a["alert_key"] == "powerState" {
-      if a["new"] != "1" {
-        body = "Power FAILED"
-      } else {
-        body = "Power restored"
-      }
-    } else {
-      body = a["alert_key"]+": "+a["new"]+"\nPrev: "+a["old"]
-    }
-  } else if a["alert_type"] == "int" {
-    if a["alert_key"] == "ifOperStatus" {
-      if power_regex.MatchString(a["ifAlias"]) {
-        if a["new"] == "1" {
-          body = "Power sensor Ok"
-        } else if a["new"] == "2" {
-          body = "Power sensor FAIL"
-        }
-      } else {
-        if a["new"] == "1" {
-          body = "Interface UP"
-        } else if a["new"] == "2" {
-          body = "Interface DOWN"
-        }
-      }
-    } else {
-      body = a["alert_key"]+": "+a["new"]+"\nPrev: "+a["old"]
-    }
-    body += "\nInterface: "+a["ifName"]
-    if a["ifAlias"] != "" {
-      body += " ("+a["ifAlias"]+")"
-    }
-  }
-  body += "\nDevice: "+a["short_name"]+" ("+a["sysLocation"]+")"
-  body += "\nDevID: "+a["id"]+" ("+a["data_ip"]+")"
-  i, err := strconv.ParseInt(a["last_seen"], 10, 64)
-  if err == nil {
-    body += "\nLastSeen: "+time.Unix(i, 0).Format("Mon, 2006 Jan 2 15:04:05 ")
-  }
-  i, err = strconv.ParseInt(a["time"], 10, 64)
-  if err == nil {
-    body += "\nTimestamp: "+time.Unix(i, 0).Format("Mon, 2006 Jan 2 15:04:05 ")
-  }
+  _, body, _ := getMessageText(a)
 
   if opt_v > 1 {
     fmt.Println()
@@ -405,44 +394,7 @@ func smsAlert(phones []string, a map[string]string) {
     recover() //just ignore type assertions
   } ()
 
-  var text string
-
-  if a["alert_type"] == "dev" {
-    if a["alert_key"] == "overall_status" {
-      text = strings.ToUpper(a["overall_status"])+": status"
-    } else if a["alert_key"] == "powerState" {
-      if a["new"] != "1" {
-        text = "CRIT: power"
-      } else {
-        text = "OK: power"
-      }
-    } else {
-      text = a["alert_key"]+": "+a["new"]
-    }
-  } else if a["alert_type"] == "int" {
-    if a["alert_key"] == "ifOperStatus" {
-      if power_regex.MatchString(a["ifAlias"]) {
-        if a["new"] == "1" {
-          text = "OK: power sensor"
-        } else if a["new"] == "2" {
-          text = "FAIL: power sensor"
-        }
-      } else {
-        if a["new"] == "1" {
-          text = "OK: ifUp"
-        } else if a["new"] == "2" {
-          text = "CRIT: ifDown"
-        }
-      }
-    } else {
-      text = a["alert_key"]+": "+a["new"]
-    }
-    text += " "+a["ifName"]
-    if a["ifAlias"] != "" {
-      text += " ("+a["ifAlias"]+")"
-    }
-  }
-  text += " @ "+a["short_name"]+" ("+a["sysLocation"]+")"
+  _, _, text := getMessageText(a)
 
   if opt_v > 1 {
     fmt.Println()
