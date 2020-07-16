@@ -224,9 +224,9 @@ func getMessageText(a map[string]string) (mailSubj string, longMessage string, s
         longMessage = "Устройство НЕ на связи более 5 минут:"
         smsMessage = "Устройство на связи более 5 минут"
       case "error":
-        mailSubj = "Устройство НЕ на связи более 10 минут"
-        longMessage = "Устройство НЕ на связи более 10 минут:"
-        smsMessage = "Устройство на связи более 10 минут"
+        mailSubj = "Устройство НЕ на связи более 5 минут"
+        longMessage = "Устройство НЕ на связи более 5 минут:"
+        smsMessage = "Устройство на связи более 5 минут"
       default:
         mailSubj = "Устройство НЕ на связи, статус "+strings.ToUpper(a["overall_status"])
         longMessage = "Устройство НЕ на связи, статус "+strings.ToUpper(a["overall_status"])+":"
