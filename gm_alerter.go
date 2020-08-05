@@ -457,7 +457,7 @@ func processAlert(alert_json string) error {
       //if
       if opt_v > 1 {
         fmt.Println()
-        fmt.Println("Ignore: "+a["alert_type"]+" "+a["ifName"]+" @ "+a["short_name"]+" "+a["alert_key"]+" "+a["old"]+" -> "+a["new"]+" time: "+a["time"])
+        fmt.Println("Ignore by status change: "+a["alert_type"]+" "+a["ifName"]+" @ "+a["short_name"]+" "+a["alert_key"]+" "+a["old"]+" -> "+a["new"]+" time: "+a["time"])
       }
       return nil
     }
@@ -465,7 +465,7 @@ func processAlert(alert_json string) error {
     //skip changes with not running devices
     if opt_v > 1 {
       fmt.Println()
-      fmt.Println("Ignore: "+a["alert_type"]+" "+a["ifName"]+" @ "+a["short_name"]+" "+a["alert_key"]+" "+a["old"]+" -> "+a["new"]+" time: "+a["time"])
+      fmt.Println("Ignore by bad dev status: "+a["alert_type"]+" "+a["ifName"]+" @ "+a["short_name"]+" "+a["alert_key"]+" "+a["old"]+" -> "+a["new"]+" time: "+a["time"])
     }
     return nil
   }
@@ -477,17 +477,52 @@ func processAlert(alert_json string) error {
 
   if group_rules, ok := data.VMe("config", "group_rules"); ok {
     for group, rule_i := range group_rules {
+
+      if opt_v > 4 {
+        fmt.Println("Matching against group rule", group, ":")
+        fmt.Println(rule_i.(string))
+        fmt.Println()
+      }
       match, err := MatchAlertRule(rule_i.(string), a)
 //fmt.Println(match, rule_i.(string))
       if err == nil && match {
+        if opt_v > 4 {
+          fmt.Println("Matched!")
+        }
         host_groups = append(host_groups, group)
+      } else {
+        if opt_v > 4 {
+          fmt.Println("NOT matched")
+        }
+      }
+      if opt_v > 4 {
+        fmt.Println()
       }
     }
   }
 
+  if opt_v > 3 {
+    fmt.Println("Host matched groups:", host_groups)
+  }
+
   if user_groups, ok := data.VMe("config", "user_groups"); ok {
+    if opt_v > 4 {
+      fmt.Println("Processing user groups")
+    }
     for ug_id, ug_m := range user_groups {
+
+      if opt_v > 4 {
+        fmt.Println("user group:", ug_id)
+      }
+
       ug_h := ug_m.(M)
+
+      if opt_v > 5 {
+        fmt.Println("user group config:")
+        j, _ := json.MarshalIndent(ug_h, "       ", "  ")
+        fmt.Println(string(j))
+      }
+
       if persons_h, ok := ug_h.VMe("persons"); ok {
         emails := make([]string, 0)
         phones := make([]string, 0)
@@ -500,15 +535,28 @@ func processAlert(alert_json string) error {
           if phone, ok := p_m.(M).Vse("phone"); ok && IndexOf(phones, phone) < 0 {
             phones = append(phones, phone)
           }
-          if userid, ok := p_m.(M).Vse("telegram"); ok && IndexOf(alert_userids, userid) < 0 {
+          if userid, ok := p_m.(M).Vse("telegram"); ok && IndexOf(userids, userid) < 0 {
             userids = append(userids, userid)
           }
         }
 
         if ags_i, ok := data.VAe("config", "user_groups", ug_id, "mail_alerts"); ok && len(emails) > 0 {
+          if opt_v > 2 {
+            fmt.Println("Method: mail_alerts")
+          }
           for _, ag_h := range ags_i.([]M) {
+            if opt_v > 4 {
+              fmt.Println("Method group/rule pair:")
+              j, _ := json.MarshalIndent(ag_h, "       ", "  ")
+              fmt.Println(string(j))
+            }
             if ag_h.Vs("action") != "ignore" {
               if rule, ok := data.Vse("config", "rules", ag_h.Vs("rule")); ok && (ag_h.Vs("group") == "*" || IndexOf(host_groups, ag_h.Vs("group")) >= 0) {
+
+                if opt_v > 4 {
+                  fmt.Println("Matching against rule:", rule)
+                }
+
                 match, err := MatchAlertRule(rule, a)
                 if match && err == nil {
                   if opt_v > 2 {
@@ -517,18 +565,40 @@ func processAlert(alert_json string) error {
                   for _, email := range emails {
                     alert_emails = StrAppendOnce(alert_emails, email)
                   }
+                } else {
+                  if opt_v > 4 {
+                    fmt.Println("NOT matched")
+                  }
                 }
                 if ag_h.Vs("action") == "stop" {
+                  if opt_v > 4 {
+                    fmt.Println("break method rules")
+                  }
                   break
+                }
+              } else {
+                if opt_v > 1 {
+                  fmt.Println("SKIP method group/rule pair")
                 }
               }
             }
           }
         }
-        if ags_i, ok := data.VAe("config", "user_groups", ug_id, "telegram_alerts"); ok && len(emails) > 0 {
+        if ags_i, ok := data.VAe("config", "user_groups", ug_id, "telegram_alerts"); ok && len(userids) > 0 {
+          if opt_v > 2 {
+            fmt.Println("Method: telegram_alerts")
+          }
           for _, ag_h := range ags_i.([]M) {
+            if opt_v > 4 {
+              fmt.Println("Method group/rule pair:")
+              j, _ := json.MarshalIndent(ag_h, "       ", "  ")
+              fmt.Println(string(j))
+            }
             if ag_h.Vs("action") != "ignore" {
               if rule, ok := data.Vse("config", "rules", ag_h.Vs("rule")); ok && (ag_h.Vs("group") == "*" || IndexOf(host_groups, ag_h.Vs("group")) >= 0) {
+                if opt_v > 4 {
+                  fmt.Println("Matching against rule:", rule)
+                }
                 match, err := MatchAlertRule(rule, a)
                 if match && err == nil {
                   if opt_v > 2 {
@@ -537,18 +607,42 @@ func processAlert(alert_json string) error {
                   for _, userid := range userids {
                     alert_userids = StrAppendOnce(alert_userids, userid)
                   }
+                } else {
+                  if opt_v > 4 {
+                    fmt.Println("NOT matched")
+                  }
                 }
                 if ag_h.Vs("action") == "stop" {
+                  if opt_v > 4 {
+                    fmt.Println("break method rules")
+                  }
                   break
+                }
+              } else {
+                if opt_v > 1 {
+                  fmt.Println("SKIP method group/rule pair")
                 }
               }
             }
           }
         }
         if ags_i, ok := data.VAe("config", "user_groups", ug_id, "sms_alerts"); ok && len(phones) > 0 {
+          if opt_v > 2 {
+            fmt.Println("Method: sms_alerts")
+          }
           for _, ag_h := range ags_i.([]M) {
+            if opt_v > 4 {
+              fmt.Println("Method group/rule pair:")
+              j, _ := json.MarshalIndent(ag_h, "       ", "  ")
+              fmt.Println(string(j))
+            }
             if ag_h.Vs("action") != "ignore" {
               if rule, ok := data.Vse("config", "rules", ag_h.Vs("rule")); ok && (ag_h.Vs("group") == "*" || IndexOf(host_groups, ag_h.Vs("group")) >= 0) {
+
+                if opt_v > 4 {
+                  fmt.Println("Matching against rule:", rule)
+                }
+
                 match, err := MatchAlertRule(rule, a)
                 if match && err == nil {
                   if opt_v > 2 {
@@ -557,14 +651,28 @@ func processAlert(alert_json string) error {
                   for _, phone := range phones {
                     alert_phones = StrAppendOnce(alert_phones, phone)
                   }
+                } else {
+                  if opt_v > 4 {
+                    fmt.Println("NOT matched")
+                  }
                 }
                 if ag_h.Vs("action") == "stop" {
+                  if opt_v > 4 {
+                    fmt.Println("break method rules")
+                  }
                   break
+                }
+              } else {
+                if opt_v > 1 {
+                  fmt.Println("SKIP method group/rule pair")
                 }
               }
             }
           }
         }
+      }
+      if opt_v > 4 {
+        fmt.Println("")
       }
     }
   }
@@ -576,7 +684,7 @@ func processAlert(alert_json string) error {
   if len(alert_phones) == 0 && len(alert_emails) == 0 && len(alert_userids) == 0 {
     if opt_v > 1 {
       fmt.Println()
-      fmt.Println("Ignore: "+a["alert_type"]+" "+a["ifName"]+" @ "+a["short_name"]+" "+a["alert_key"]+" "+a["old"]+" -> "+a["new"]+" time: "+a["time"])
+      fmt.Println("Ignore by no alert methods selected: "+a["alert_type"]+" "+a["ifName"]+" @ "+a["short_name"]+" "+a["alert_key"]+" "+a["old"]+" -> "+a["new"]+" time: "+a["time"])
     }
   }
   return nil
